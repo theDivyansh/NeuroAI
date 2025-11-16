@@ -1,11 +1,6 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import numpy as np
-import tensorflow as tf
-from tensorflow.keras.applications import ResNet50, DenseNet121
-from tensorflow.keras.models import Model
-from tensorflow.keras.layers import Dense, GlobalAveragePooling2D, Dropout
-from tensorflow.keras.preprocessing import image
 import io
 from PIL import Image
 import base64
@@ -16,48 +11,7 @@ import os
 app = Flask(__name__)
 CORS(app)
 
-# Toggle for demo mode
-DEMO_MODE = True  # Set to False when using trained models
 
-class StrokeDetectionModel:
-    def __init__(self, model_type='resnet50'):
-        self.model_type = model_type
-        self.model = self._build_model()
-        self.input_shape = (224, 224)
-
-    def _build_model(self):
-        if self.model_type == 'resnet50':
-            base_model = ResNet50(weights='imagenet', include_top=False, input_shape=(224, 224, 3))
-        else:
-            base_model = DenseNet121(weights='imagenet', include_top=False, input_shape=(224, 224, 3))
-
-        x = base_model.output
-        x = GlobalAveragePooling2D()(x)
-        x = Dense(512, activation='relu')(x)
-        x = Dropout(0.5)(x)
-        x = Dense(256, activation='relu')(x)
-        x = Dropout(0.3)(x)
-        predictions = Dense(1, activation='sigmoid')(x)
-
-        model = Model(inputs=base_model.input, outputs=predictions)
-
-        for layer in base_model.layers[:int(len(base_model.layers) * 0.8)]:
-            layer.trainable = False
-
-        model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
-        return model
-
-    def preprocess_image(self, img):
-        img = img.resize(self.input_shape)
-        img_array = image.img_to_array(img)
-        img_array = np.expand_dims(img_array, axis=0)
-        img_array = tf.keras.applications.resnet50.preprocess_input(img_array) if self.model_type == 'resnet50' else tf.keras.applications.densenet.preprocess_input(img_array)
-        return img_array
-
-    def predict(self, img):
-        processed_img = self.preprocess_image(img)
-        prediction = self.model.predict(processed_img, verbose=0)
-        return float(prediction[0][0])
 
 class AdversarialDetector:
     def __init__(self, model=None):
@@ -240,13 +194,8 @@ resnet_model = None
 densenet_model = None
 adversarial_detector = None
 
-# Only initialize models if not in DEMO_MODE
-if not DEMO_MODE:
-    resnet_model = StrokeDetectionModel('resnet50')
-    densenet_model = StrokeDetectionModel('densenet121')
-
-# Initialize adversarial detector with model reference
-adversarial_detector = AdversarialDetector(model=resnet_model)
+# Initialize adversarial detector (models are in demo mode)
+adversarial_detector = AdversarialDetector(model=None)
 
 def get_demo_prediction(img):
     """Generate demo predictions based on image characteristics"""
@@ -354,13 +303,7 @@ def test_adversarial_detection():
             img_array = np.array(img)
             
             # Get predictions on original image
-            if DEMO_MODE:
-                resnet_pred_orig, densenet_pred_orig = get_demo_prediction(img)
-            else:
-                if resnet_model is None or densenet_model is None:
-                    return jsonify({'error': 'Models not loaded'}), 500
-                resnet_pred_orig = resnet_model.predict(img)
-                densenet_pred_orig = densenet_model.predict(img)
+            resnet_pred_orig, densenet_pred_orig = get_demo_prediction(img)
             
             # Generate FGSM adversarial example
             fgsm_adversarial = adversarial_detector.generate_fgsm_attack(img_array)
@@ -381,18 +324,10 @@ def test_adversarial_detection():
             pgd_img = Image.fromarray(pgd_adversarial)
             
             # Get predictions on FGSM adversarial
-            if DEMO_MODE:
-                resnet_pred_fgsm, densenet_pred_fgsm = get_demo_prediction(fgsm_img)
-            else:
-                resnet_pred_fgsm = resnet_model.predict(fgsm_img)
-                densenet_pred_fgsm = densenet_model.predict(fgsm_img)
+            resnet_pred_fgsm, densenet_pred_fgsm = get_demo_prediction(fgsm_img)
             
             # Get predictions on PGD adversarial
-            if DEMO_MODE:
-                resnet_pred_pgd, densenet_pred_pgd = get_demo_prediction(pgd_img)
-            else:
-                resnet_pred_pgd = resnet_model.predict(pgd_img)
-                densenet_pred_pgd = densenet_model.predict(pgd_img)
+            resnet_pred_pgd, densenet_pred_pgd = get_demo_prediction(pgd_img)
             
             # Detect adversarial attacks
             original_detection = adversarial_detector.detect_adversarial(
@@ -495,15 +430,8 @@ def predict():
             return jsonify({'error': f'Invalid image file: {str(e)}'}), 400
 
         try:
-            if DEMO_MODE:
-                # Use demo predictions instead of untrained models
-                resnet_pred, densenet_pred = get_demo_prediction(img)
-            else:
-                # Use actual model predictions
-                if resnet_model is None or densenet_model is None:
-                    return jsonify({'error': 'Models not loaded'}), 500
-                resnet_pred = resnet_model.predict(img)
-                densenet_pred = densenet_model.predict(img)
+            # Get predictions
+            resnet_pred, densenet_pred = get_demo_prediction(img)
 
             # Detect adversarial attacks using the predictions
             adversarial_result = adversarial_detector.detect_adversarial(
@@ -565,11 +493,7 @@ def batch_predict():
         for file in files:
             img = Image.open(io.BytesIO(file.read())).convert('RGB')
 
-            if DEMO_MODE:
-                resnet_pred, densenet_pred = get_demo_prediction(img)
-            else:
-                resnet_pred = resnet_model.predict(img)
-                densenet_pred = densenet_model.predict(img)
+            resnet_pred, densenet_pred = get_demo_prediction(img)
 
             adversarial_result = adversarial_detector.detect_adversarial(
                 img, resnet_pred, densenet_pred
